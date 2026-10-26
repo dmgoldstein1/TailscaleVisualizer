@@ -48,17 +48,19 @@ export class TailscaleManualImporter {
     return 'other';
   }
 
-  async saveDevicesToFile(devices: any[]): Promise<void> {
+  async saveDevicesToFile(devices: Array<Record<string, unknown>>): Promise<void> {
     const config: ManualTailscaleConfig = {
-      devices: devices.map(d => ({
-        name: d.name,
-        hostname: d.hostname,
-        ipAddress: d.ipAddress || d.addresses?.[0] || 'Unknown',
-        os: d.os,
-        deviceType: d.deviceType,
-        online: d.online || d.status === 'connected',
-        tags: d.tags || []
-      }))
+      devices: devices.map((d) => ({
+        name: String(d.name ?? "unknown"),
+        hostname: String(d.hostname ?? d.name ?? "unknown"),
+        ipAddress: String(
+          d.ipAddress ?? (Array.isArray(d.addresses) ? d.addresses[0] : undefined) ?? "Unknown",
+        ),
+        os: typeof d.os === "string" ? d.os : undefined,
+        deviceType: typeof d.deviceType === "string" ? d.deviceType : undefined,
+        online: Boolean(d.online ?? d.status === "connected"),
+        tags: Array.isArray(d.tags) ? (d.tags as string[]) : [],
+      })),
     };
     
     await fs.writeFile(this.configPath, JSON.stringify(config, null, 2));
@@ -68,42 +70,58 @@ export class TailscaleManualImporter {
 // Alternative: Import from Tailscale export
 export async function importFromTailscaleExport(exportData: string): Promise<InsertDevice[]> {
   try {
-    const data = JSON.parse(exportData);
+    const data = JSON.parse(exportData) as {
+      devices?: Array<Record<string, unknown>>;
+      Peers?: Record<string, Record<string, unknown>>;
+    };
     const devices: InsertDevice[] = [];
-    
+
     // Handle different export formats
-    if (data.devices) {
+    if (Array.isArray(data.devices)) {
       // Direct device list
-      data.devices.forEach((device: any, index: number) => {
+      data.devices.forEach((device, index) => {
+        const name = String(device.name ?? device.hostname ?? `Device ${index + 1}`);
+        const hostname = String(device.hostname ?? device.name ?? name);
+        const addresses = Array.isArray(device.addresses)
+          ? (device.addresses as unknown[]).map(String)
+          : [];
+        const os = typeof device.os === "string" ? device.os : "Unknown";
         devices.push({
-          name: device.name || device.hostname,
-          hostname: device.hostname || device.name,
-          tailscaleId: device.id || `import-${index + 1}`,
-          ipAddress: device.addresses?.[0] || device.ipAddress || '100.64.0.' + (index + 1),
-          deviceType: device.os?.toLowerCase().includes('linux') ? 'server' : 'desktop',
-          os: device.os || 'Unknown',
+          name,
+          hostname,
+          tailscaleId: String(device.id ?? `import-${index + 1}`),
+          ipAddress: addresses[0] ?? (typeof device.ipAddress === "string" ? device.ipAddress : `100.64.0.${index + 1}`),
+          deviceType: os.toLowerCase().includes('linux') ? 'server' : 'desktop',
+          os,
           status: device.online ? 'connected' : 'disconnected',
-          tags: device.tags || [],
-          isCoordinator: device.isExitNode || false
+          tags: Array.isArray(device.tags) ? (device.tags as string[]) : [],
+          isCoordinator: Boolean(device.isExitNode)
         });
       });
-    } else if (data.Peers) {
+    } else if (data.Peers && typeof data.Peers === "object") {
       // Tailscale status format
-      Object.entries(data.Peers).forEach(([id, peer]: [string, any], index) => {
+      Object.entries(data.Peers).forEach(([id, peer], index) => {
+        const hostName = typeof peer.HostName === "string" ? peer.HostName : undefined;
+        const dnsName = typeof peer.DNSName === "string" ? peer.DNSName : undefined;
+        const ips = Array.isArray(peer.TailscaleIPs)
+          ? (peer.TailscaleIPs as unknown[]).map(String)
+          : [];
+        const os = typeof peer.OS === "string" ? peer.OS : "Unknown";
+        const name = hostName ?? dnsName?.split('.')[0] ?? `Device ${index + 1}`;
         devices.push({
-          name: peer.HostName || peer.DNSName?.split('.')[0] || `Device ${index + 1}`,
-          hostname: peer.DNSName || peer.HostName,
+          name,
+          hostname: dnsName ?? hostName ?? name,
           tailscaleId: id,
-          ipAddress: peer.TailscaleIPs?.[0] || '100.64.0.' + (index + 1),
-          deviceType: peer.OS?.toLowerCase().includes('linux') ? 'server' : 'desktop',
-          os: peer.OS || 'Unknown',
+          ipAddress: ips[0] ?? `100.64.0.${index + 1}`,
+          deviceType: os.toLowerCase().includes('linux') ? 'server' : 'desktop',
+          os,
           status: peer.Online ? 'connected' : 'disconnected',
-          tags: peer.Tags || [],
-          isCoordinator: peer.ExitNode || false
+          tags: Array.isArray(peer.Tags) ? (peer.Tags as string[]) : [],
+          isCoordinator: Boolean(peer.ExitNode)
         });
       });
     }
-    
+
     return devices;
   } catch (error) {
     console.error('Failed to parse Tailscale export:', error);

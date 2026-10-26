@@ -1,10 +1,14 @@
 node_modules
 npm-debug.log*
+*.log
 .env
 .env.local
 .env.production
+.env.*
+!.env.example
 dist
 build
+coverage
 .git
 .gitignore
 README.md
@@ -15,3 +19,8 @@ Dockerfile
 .nix
 replit.nix
 .replit.toml
+.DS_Store
+grafana
+prometheus
+attached_assets
+scripts

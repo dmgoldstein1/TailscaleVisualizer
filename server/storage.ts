@@ -1,13 +1,10 @@
-import {
-  devices,
-  connections,
-  networkStats,
-  type Device,
-  type InsertDevice,
-  type Connection,
-  type InsertConnection,
-  type NetworkStats,
-  type NetworkTopology,
+import type {
+  Device,
+  InsertDevice,
+  Connection,
+  InsertConnection,
+  NetworkStats,
+  NetworkTopology,
 } from "@shared/schema";
 import { getTailscaleClient, isTailscaleConfigured } from "./tailscale";
 
@@ -54,9 +51,16 @@ export class MemStorage implements IStorage {
       lastUpdated: new Date(),
     };
 
-    // Initialize with sample network topology
-    this.initializeSampleData();
+    // Initialize with sample network topology.
+    // Constructor can't be async, so track readiness via `ready` instead of
+    // a floating promise (prevents race: requests before init see empty state).
+    this.ready = this.initializeSampleData().catch((error) => {
+      console.error("Failed to initialize storage:", error);
+    });
   }
+
+  /** Resolves when initial data load completes. Await before serving traffic in tests. */
+  readonly ready: Promise<void>;
 
   private async initializeSampleData() {
     // Try to load from Tailscale API first
@@ -309,8 +313,8 @@ export class MemStorage implements IStorage {
   async deleteDevice(id: number): Promise<void> {
     this.devices.delete(id);
     // Also delete related connections
-    const connectionsToDelete = [];
-    for (const [connId, conn] of Array.from(this.connections.entries())) {
+    const connectionsToDelete: number[] = [];
+    for (const [connId, conn] of this.connections) {
       if (conn.fromDeviceId === id || conn.toDeviceId === id) {
         connectionsToDelete.push(connId);
       }

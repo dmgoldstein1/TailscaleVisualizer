@@ -1,4 +1,8 @@
-import type { Device, InsertDevice, NetworkStats } from "@shared/schema";
+import type { InsertDevice, NetworkStats } from "@shared/schema";
+import {
+  getEffectiveTailscaleConfig,
+  getTailscaleConfigStatus,
+} from "./runtime-config";
 
 export interface TailscaleDevice {
   id: string;
@@ -46,22 +50,30 @@ export class TailscaleClient {
     options: RequestInit = {},
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
-    
-    // Debug logging
-    console.log(`\n🔍 Tailscale API Request Debug:`);
-    console.log(`URL: ${url}`);
-    console.log(`Method: ${options.method || 'GET'}`);
-    console.log(`Tailnet: ${this.tailnet}`);
-    console.log(`API Key: ${this.apiKey.substring(0, 10)}...`);
-    
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json",
-        ...options.headers,
-      },
-    });
+
+    // Timeout guard — Tailscale API should respond quickly; don't hang event loop
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+
+    let response: globalThis.Response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+          ...options.headers,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error("Tailscale API request timed out");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       // Get detailed error information
@@ -85,29 +97,26 @@ export class TailscaleClient {
   async getDevices(): Promise<TailscaleDevice[]> {
     try {
       const response = await this.makeRequest<TailscaleApiResponse>(
-        `/tailnet/${this.tailnet}/devices`,
+        `/tailnet/${encodeURIComponent(this.tailnet)}/devices`,
       );
       return response.devices;
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       // Try alternative endpoint formats
-      if (error.message?.includes('403')) {
-        console.log('\n🔄 Trying alternative API endpoint formats...');
-        
+      if (message?.includes('403')) {
         // Try without .ts.net suffix
         const simpleTailnet = this.tailnet.replace('.ts.net', '');
-        console.log(`Attempting with tailnet: ${simpleTailnet}`);
-        
+
         try {
           const response = await this.makeRequest<TailscaleApiResponse>(
-            `/tailnet/${simpleTailnet}/devices`,
+            `/tailnet/${encodeURIComponent(simpleTailnet)}/devices`,
           );
-          console.log('✅ Success with simplified tailnet name!');
           return response.devices;
-        } catch (altError) {
-          console.log('❌ Alternative endpoint also failed');
+        } catch {
+          // Fall through to original error
         }
       }
-      
+
       throw error;
     }
   }
@@ -223,22 +232,28 @@ let tailscaleClient: TailscaleClient | null = null;
 
 export function getTailscaleClient(): TailscaleClient | null {
   if (!tailscaleClient) {
-    const apiKey = process.env.TAILSCALE_API_KEY;
-    const tailnet = process.env.TAILSCALE_TAILNET;
+    const effective = getEffectiveTailscaleConfig();
 
-    if (!apiKey || !tailnet) {
-      console.warn(
-        "Tailscale API key or tailnet not configured. Using mock data.",
-      );
+    if (!effective) {
       return null;
     }
 
-    tailscaleClient = new TailscaleClient(apiKey, tailnet);
+    tailscaleClient = new TailscaleClient(
+      effective.apiKey,
+      effective.tailnet,
+    );
   }
 
   return tailscaleClient;
 }
 
-export function isTailscaleConfigured(): boolean {
-  return !!(process.env.TAILSCALE_API_KEY && process.env.TAILSCALE_TAILNET);
+/** Drop the cached client so the next call picks up new credentials. */
+export function resetTailscaleClient(): void {
+  tailscaleClient = null;
 }
+
+export function isTailscaleConfigured(): boolean {
+  return getEffectiveTailscaleConfig() !== null;
+}
+
+export { getTailscaleConfigStatus };

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Search, Bell, Sun, Moon, Network, Zap, RefreshCw } from "lucide-react";
+import { Search, Bell, Sun, Moon, Network, Zap, RefreshCw, Settings } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NetworkTopology } from "@/components/NetworkTopology";
 import { Sidebar } from "@/components/Sidebar";
 import { DeviceModal } from "@/components/DeviceModal";
+import { TailscaleSettingsDialog } from "@/components/TailscaleSettingsDialog";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useTheme } from "@/components/ThemeProvider";
 import type {
@@ -22,7 +23,8 @@ export default function Dashboard() {
   const { theme, toggleTheme } = useTheme();
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [notificationCount, setNotificationCount] = useState(3);
+  const [notificationCount] = useState(3);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const { toast } = useToast();
 
   const { data: topology, refetch } = useQuery<NetworkTopologyType>({
@@ -38,7 +40,7 @@ export default function Dashboard() {
       });
       queryClient.invalidateQueries({ queryKey: ["/api/network/topology"] });
     },
-    onError: (error: any) => {
+    onError: (error: Error) => {
       toast({
         title: "Refresh Failed",
         description: error.message || "Failed to refresh network data",
@@ -51,8 +53,9 @@ export default function Dashboard() {
 
   // Handle real-time updates
   useEffect(() => {
-    if (lastMessage) {
-      const message = JSON.parse(lastMessage);
+    if (!lastMessage) return;
+    try {
+      const message = JSON.parse(lastMessage) as { type?: string };
 
       if (
         message.type === "device_status" ||
@@ -61,6 +64,8 @@ export default function Dashboard() {
       ) {
         refetch();
       }
+    } catch {
+      // Ignore malformed WebSocket payloads
     }
   }, [lastMessage, refetch]);
 
@@ -128,6 +133,15 @@ export default function Dashboard() {
               />
             </Button>
 
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setSettingsOpen(true)}
+              title="Tailscale connection settings"
+            >
+              <Settings className="h-4 w-4" />
+            </Button>
+
             <Button variant="outline" size="icon" onClick={toggleTheme}>
               {theme === "dark" ? (
                 <Sun className="h-4 w-4" />
@@ -150,11 +164,7 @@ export default function Dashboard() {
 
       <div className="flex">
         {/* Sidebar */}
-        <Sidebar
-          stats={topology.stats}
-          devices={topology.devices}
-          onDeviceSelect={setSelectedDevice}
-        />
+        <Sidebar stats={topology.stats} devices={topology.devices} />
 
         {/* Main Content */}
         <main className="flex-1 flex flex-col">
@@ -282,6 +292,12 @@ export default function Dashboard() {
           onClose={() => setSelectedDevice(null)}
         />
       )}
+
+      {/* Tailscale connection settings */}
+      <TailscaleSettingsDialog
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
   );
 }
