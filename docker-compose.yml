@@ -1,18 +1,21 @@
-version: "3.8"
-
 services:
   app:
     build: .
     ports:
-      - "6000:3000"
+      # Host side is ${HOST_PORT} so the start script (or you) can dodge
+      # occupied ports; the container itself always listens on ${PORT}.
+      - "${HOST_PORT:-5000}:${PORT:-5000}"
     environment:
       - NODE_ENV=production
-      - TAILSCALE_API_KEY=${TAILSCALE_API_KEY}
-      - TAILSCALE_TAILNET=${TAILSCALE_TAILNET}
+      - PORT=${PORT:-5000}
+      - TAILSCALE_API_KEY=${TAILSCALE_API_KEY:-}
+      - TAILSCALE_TAILNET=${TAILSCALE_TAILNET:-}
       - DATABASE_URL=${DATABASE_URL:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/network/stats"]
+      # DHI runtime has no shell/wget — exec-form node probe (matches Dockerfile)
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5000/api/network/stats').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -21,7 +24,7 @@ services:
   # Optional: PostgreSQL database
   # Uncomment if you want to use a persistent database instead of in-memory storage
   # postgres:
-  #   image: postgres:15-alpine
+  #   image: postgres:16-alpine
   #   environment:
   #     POSTGRES_DB: tailscale_dashboard
   #     POSTGRES_USER: postgres

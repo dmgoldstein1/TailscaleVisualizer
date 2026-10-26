@@ -7,7 +7,6 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import type { Device } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
 
@@ -147,7 +146,7 @@ export function DeviceModal({ device, isOpen, onClose }: DeviceModalProps) {
           </div>
 
           {/* Tags */}
-          {device.tags && device.tags.length > 0 && (
+          {device.tags.length > 0 && (
             <div className="space-y-2">
               <label className="text-sm font-medium text-muted-foreground">
                 Tags

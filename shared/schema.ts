@@ -19,10 +19,10 @@ export const devices = pgTable("devices", {
   os: text("os").notNull(),
   status: text("status").notNull(), // connected, disconnected, unstable
   lastSeen: timestamp("last_seen").notNull(),
-  tags: text("tags").array().default([]),
-  isCoordinator: boolean("is_coordinator").default(false),
-  x: integer("x").default(0),
-  y: integer("y").default(0),
+  tags: text("tags").array().notNull().default([]),
+  isCoordinator: boolean("is_coordinator").notNull().default(false),
+  x: integer("x").notNull().default(0),
+  y: integer("y").notNull().default(0),
 });
 
 export const connections = pgTable("connections", {

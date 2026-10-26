@@ -1,18 +1,16 @@
 import { useState } from "react";
 import { Monitor, Smartphone, Server, Activity, Filter } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import type { Device, NetworkStats } from "@shared/schema";
-import { formatDistanceToNow } from "date-fns";
 
 interface SidebarProps {
   stats: NetworkStats;
   devices: Device[];
-  onDeviceSelect: (device: Device) => void;
 }
 
-export function Sidebar({ stats, devices, onDeviceSelect }: SidebarProps) {
+export function Sidebar({ stats, devices }: SidebarProps) {
   const [showOnline, setShowOnline] = useState(true);
   const [showOffline, setShowOffline] = useState(false);
   const [showUnstable, setShowUnstable] = useState(true);
@@ -130,7 +128,7 @@ export function Sidebar({ stats, devices, onDeviceSelect }: SidebarProps) {
               <Checkbox
                 id="show-online"
                 checked={showOnline}
-                onCheckedChange={setShowOnline}
+                onCheckedChange={(checked) => setShowOnline(checked === true)}
               />
               <label htmlFor="show-online" className="text-sm">
                 Show Online
@@ -140,7 +138,7 @@ export function Sidebar({ stats, devices, onDeviceSelect }: SidebarProps) {
               <Checkbox
                 id="show-offline"
                 checked={showOffline}
-                onCheckedChange={setShowOffline}
+                onCheckedChange={(checked) => setShowOffline(checked === true)}
               />
               <label htmlFor="show-offline" className="text-sm">
                 Show Offline
@@ -150,7 +148,7 @@ export function Sidebar({ stats, devices, onDeviceSelect }: SidebarProps) {
               <Checkbox
                 id="show-unstable"
                 checked={showUnstable}
-                onCheckedChange={setShowUnstable}
+                onCheckedChange={(checked) => setShowUnstable(checked === true)}
               />
               <label htmlFor="show-unstable" className="text-sm">
                 Show Unstable
