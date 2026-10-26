@@ -10,15 +10,20 @@ export interface TailscaleDevice {
   hostname: string;
   clientVersion: string;
   os: string;
-  addresses: string[];
+  addresses?: string[];
   machineKey: string;
   nodeKey: string;
   created: string;
-  lastSeen: string;
-  online: boolean;
+  // NOTE: the real API has no `online` field. Presence is signalled by
+  // `connectedToControl` (Oct 2025+), and `lastSeen` is only included
+  // when `connectedToControl` is false. `online` is kept optional for
+  // older/alternate payload shapes (e.g. `tailscale status` peers).
+  lastSeen?: string | null;
+  online?: boolean;
+  connectedToControl?: boolean;
   isExternal: boolean;
   updateAvailable: boolean;
-  tags: string[];
+  tags?: string[];
   expires: string;
   keyExpiryDisabled: boolean;
   authorized: boolean;
@@ -29,6 +34,40 @@ export interface TailscaleDevice {
   advertiseExitNode: boolean;
   advertiseRoutes: string[];
   blocksIncomingConnections: boolean;
+}
+
+export type DevicePresence = "connected" | "disconnected" | "unstable";
+
+const CONNECTED_RECENCY_MINUTES = 5;
+const UNSTABLE_RECENCY_MINUTES = 30;
+
+function statusFromLastSeen(lastSeen?: string | null): DevicePresence {
+  if (!lastSeen) return "disconnected";
+  const seenAt = new Date(lastSeen).getTime();
+  if (Number.isNaN(seenAt)) return "disconnected";
+  const minutesSinceSeen = (Date.now() - seenAt) / (1000 * 60);
+  if (minutesSinceSeen <= CONNECTED_RECENCY_MINUTES) return "connected";
+  if (minutesSinceSeen <= UNSTABLE_RECENCY_MINUTES) return "unstable";
+  return "disconnected";
+}
+
+/**
+ * Derive presence from whatever shape the data arrives in.
+ * Prefer the explicit control-plane flag; fall back to an explicit
+ * `online` boolean; otherwise use `lastSeen` recency. Missing or
+ * unparseable timestamps count as disconnected, never silently online.
+ */
+export function getTailscaleDeviceStatus(device: {
+  connectedToControl?: boolean;
+  online?: boolean;
+  lastSeen?: string | null;
+}): DevicePresence {
+  if (device.connectedToControl === true) return "connected";
+  // Shapes with an explicit online flag but no timestamp
+  // (e.g. `tailscale status --json` peers): trust the flag.
+  if (device.online === true && !device.lastSeen) return "connected";
+  if (device.online === false) return "disconnected";
+  return statusFromLastSeen(device.lastSeen);
 }
 
 export interface TailscaleApiResponse {
@@ -158,17 +197,17 @@ export class TailscaleClient {
   // Convert Tailscale device to our internal format
   convertToInternalDevice(tailscaleDevice: TailscaleDevice): InsertDevice {
     const deviceType = this.getDeviceType(tailscaleDevice.os);
-    const status = this.getDeviceStatus(tailscaleDevice);
+    const status = getTailscaleDeviceStatus(tailscaleDevice);
 
     return {
       name: tailscaleDevice.name,
       hostname: tailscaleDevice.hostname,
       tailscaleId: tailscaleDevice.id,
-      ipAddress: tailscaleDevice.addresses[0] || "Unknown",
+      ipAddress: tailscaleDevice.addresses?.[0] ?? "Unknown",
       deviceType,
       os: tailscaleDevice.os,
       status,
-      tags: tailscaleDevice.tags || [],
+      tags: tailscaleDevice.tags ?? [],
       isCoordinator: false, // No coordinator designation needed with full access
     };
   }
@@ -188,38 +227,22 @@ export class TailscaleClient {
     return "desktop";
   }
 
-  private getDeviceStatus(device: TailscaleDevice): string {
-    if (!device.online) return "disconnected";
-
-    const lastSeen = new Date(device.lastSeen);
-    const now = new Date();
-    const minutesSinceLastSeen =
-      (now.getTime() - lastSeen.getTime()) / (1000 * 60);
-
-    if (minutesSinceLastSeen > 5) return "unstable";
-    return "connected";
-  }
-
   // Generate network statistics from devices
   generateNetworkStats(devices: TailscaleDevice[]): NetworkStats {
-    const onlineDevices = devices.filter((d) => d.online).length;
     const totalDevices = devices.length;
-    const offlineDevices = totalDevices - onlineDevices;
-
-    // Calculate unstable devices (online but not seen recently)
-    const unstableDevices = devices.filter((d) => {
-      if (!d.online) return false;
-      const lastSeen = new Date(d.lastSeen);
-      const now = new Date();
-      const minutesSinceLastSeen =
-        (now.getTime() - lastSeen.getTime()) / (1000 * 60);
-      return minutesSinceLastSeen > 5;
-    }).length;
+    let onlineDevices = 0;
+    let unstableDevices = 0;
+    for (const device of devices) {
+      const status = getTailscaleDeviceStatus(device);
+      if (status === "connected") onlineDevices++;
+      else if (status === "unstable") unstableDevices++;
+    }
+    const offlineDevices = totalDevices - onlineDevices - unstableDevices;
 
     return {
       id: 1,
       totalDevices,
-      onlineDevices: onlineDevices - unstableDevices,
+      onlineDevices,
       offlineDevices,
       unstableDevices,
       lastUpdated: new Date(),

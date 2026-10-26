@@ -1,5 +1,6 @@
 // Manual Tailscale data import - alternative to API
 import type { InsertDevice } from "@shared/schema";
+import { getTailscaleDeviceStatus } from "./tailscale";
 import { promises as fs } from "fs";
 import path from "path";
 
@@ -30,7 +31,7 @@ export class TailscaleManualImporter {
         ipAddress: device.ipAddress,
         deviceType: device.deviceType || this.guessDeviceType(device.name),
         os: device.os || 'Unknown',
-        status: device.online ? 'connected' : 'disconnected',
+        status: getTailscaleDeviceStatus({ online: device.online }),
         tags: device.tags || [],
         isCoordinator: index === 0 // First device is coordinator
       }));
@@ -78,7 +79,7 @@ export async function importFromTailscaleExport(exportData: string): Promise<Ins
 
     // Handle different export formats
     if (Array.isArray(data.devices)) {
-      // Direct device list
+      // Direct device list (e.g. /tailnet/{tailnet}/devices payloads)
       data.devices.forEach((device, index) => {
         const name = String(device.name ?? device.hostname ?? `Device ${index + 1}`);
         const hostname = String(device.hostname ?? device.name ?? name);
@@ -93,7 +94,11 @@ export async function importFromTailscaleExport(exportData: string): Promise<Ins
           ipAddress: addresses[0] ?? (typeof device.ipAddress === "string" ? device.ipAddress : `100.64.0.${index + 1}`),
           deviceType: os.toLowerCase().includes('linux') ? 'server' : 'desktop',
           os,
-          status: device.online ? 'connected' : 'disconnected',
+          status: getTailscaleDeviceStatus({
+            connectedToControl: typeof device.connectedToControl === "boolean" ? device.connectedToControl : undefined,
+            online: typeof device.online === "boolean" ? device.online : undefined,
+            lastSeen: typeof device.lastSeen === "string" ? device.lastSeen : undefined,
+          }),
           tags: Array.isArray(device.tags) ? (device.tags as string[]) : [],
           isCoordinator: Boolean(device.isExitNode)
         });
@@ -115,7 +120,9 @@ export async function importFromTailscaleExport(exportData: string): Promise<Ins
           ipAddress: ips[0] ?? `100.64.0.${index + 1}`,
           deviceType: os.toLowerCase().includes('linux') ? 'server' : 'desktop',
           os,
-          status: peer.Online ? 'connected' : 'disconnected',
+          status: getTailscaleDeviceStatus({
+            online: typeof peer.Online === "boolean" ? peer.Online : undefined,
+          }),
           tags: Array.isArray(peer.Tags) ? (peer.Tags as string[]) : [],
           isCoordinator: Boolean(peer.ExitNode)
         });

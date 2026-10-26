@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ZoomIn, ZoomOut, Maximize2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -15,6 +15,28 @@ interface PositionedDevice extends Device {
   layoutY: number;
 }
 
+const VIEW_W = 800;
+const VIEW_H = 600;
+const MIN_SCALE = 0.5;
+const MAX_SCALE = 2.5;
+const CLICK_DRAG_THRESHOLD_PX = 5;
+
+// A persisted position is only reused when it actually falls inside the
+// viewBox — legacy rows store pixel-space coordinates that would otherwise
+// render nodes off-canvas (invisible and unclickable).
+// (Plain boolean, not a type guard: Device.x/y are typed non-null, so the
+// false branch would otherwise narrow to `never`.)
+function hasUsablePosition(d: Device): boolean {
+  return (
+    typeof d.x === "number" &&
+    typeof d.y === "number" &&
+    d.x >= 0 &&
+    d.x <= VIEW_W &&
+    d.y >= 0 &&
+    d.y <= VIEW_H
+  );
+}
+
 export function NetworkTopology({
   devices,
   connections,
@@ -22,7 +44,32 @@ export function NetworkTopology({
 }: NetworkTopologyProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // View transform in viewBox units: screen(x) = pan + scale * x
   const [scale, setScale] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  // Per-node drag offsets in viewBox units (local only, never mutates props)
+  const [nodeOffsets, setNodeOffsets] = useState<Map<number, { x: number; y: number }>>(new Map());
+
+  // Active gesture bookkeeping (refs so handlers stay fresh without re-binding)
+  const gestureRef = useRef<
+    | {
+        kind: "pan" | "node";
+        nodeId?: number;
+        startClientX: number;
+        startClientY: number;
+        lastSvgX: number;
+        lastSvgY: number;
+        origOffsetX: number;
+        origOffsetY: number;
+        moved: boolean;
+      }
+    | null
+  >(null);
+  // Set when a pointer gesture turned into a drag — next click is swallowed
+  const suppressClickRef = useRef(false);
+  const stateRef = useRef({ scale, pan });
+  stateRef.current = { scale, pan };
 
   // Device type emojis
   const getDeviceEmoji = (deviceType: string, isCoordinator: boolean) => {
@@ -54,26 +101,29 @@ export function NetworkTopology({
   };
 
   // Compute layout without mutating props (devices come from React Query cache).
-  // Devices with persisted x/y keep them; others get a circle layout.
+  // Layout is computed in viewBox units (not screen pixels) so nodes always
+  // land inside the visible 800x600 area regardless of container size.
+  // Devices with persisted x/y keep them (when in range); others get a
+  // circle layout. Dragged nodes add their local offset on top.
   const positionedDevices: PositionedDevice[] = useMemo(() => {
-    const width = containerRef.current?.clientWidth || 800;
-    const height = containerRef.current?.clientHeight || 600;
-    const cx = width / 2;
-    const cy = height / 2;
+    const cx = VIEW_W / 2;
+    const cy = VIEW_H / 2;
 
     const coordinator = devices.find((d) => d.isCoordinator);
     const others = devices.filter((d) => !d.isCoordinator);
-    const radius = Math.min(width, height) * 0.3;
+    const radius = Math.min(VIEW_W, VIEW_H) * 0.3;
 
     const positions = new Map<number, { x: number; y: number }>();
     if (coordinator) {
-      positions.set(coordinator.id, {
-        x: coordinator.x || cx,
-        y: coordinator.y || cy,
-      });
+      positions.set(
+        coordinator.id,
+        hasUsablePosition(coordinator)
+          ? { x: coordinator.x, y: coordinator.y }
+          : { x: cx, y: cy },
+      );
     }
     others.forEach((device, index) => {
-      if (device.x && device.y) {
+      if (hasUsablePosition(device)) {
         positions.set(device.id, { x: device.x, y: device.y });
       } else {
         const angle =
@@ -85,45 +135,190 @@ export function NetworkTopology({
       }
     });
 
-    return devices.map((d) => ({
-      ...d,
-      layoutX: positions.get(d.id)?.x ?? cx,
-      layoutY: positions.get(d.id)?.y ?? cy,
-    }));
-  }, [devices]);
+    return devices.map((d) => {
+      const base = positions.get(d.id) ?? { x: cx, y: cy };
+      const offset = nodeOffsets.get(d.id);
+      return {
+        ...d,
+        layoutX: base.x + (offset?.x ?? 0),
+        layoutY: base.y + (offset?.y ?? 0),
+      };
+    });
+  }, [devices, nodeOffsets]);
 
   const deviceById = useMemo(
     () => new Map(positionedDevices.map((d) => [d.id, d])),
     [positionedDevices],
   );
 
-  const handleDeviceClick = (device: Device) => {
-    onDeviceClick(device);
+  // Window-level move/up listeners: reliable for drags that leave the SVG,
+  // with no setPointerCapture (which would retarget click away from nodes).
+  // Stable identities (refs + setState only) so removeEventListener works.
+  const toSvgPoint = useCallback((clientX: number, clientY: number) => {
+    const svg = svgRef.current;
+    if (!svg) return { x: 0, y: 0 };
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return { x: 0, y: 0 };
+    const pt = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
+    return { x: pt.x, y: pt.y };
+  }, []);
+
+  const handleWinMove = useCallback(
+    (e: PointerEvent) => {
+      const g = gestureRef.current;
+      if (!g) return;
+      if (
+        Math.hypot(e.clientX - g.startClientX, e.clientY - g.startClientY) >
+        CLICK_DRAG_THRESHOLD_PX
+      ) {
+        g.moved = true;
+        suppressClickRef.current = true;
+      }
+      if (!g.moved) return;
+      const p = toSvgPoint(e.clientX, e.clientY);
+      const dx = p.x - g.lastSvgX;
+      const dy = p.y - g.lastSvgY;
+      g.lastSvgX = p.x;
+      g.lastSvgY = p.y;
+      if (g.kind === "pan") {
+        setPan((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+      } else if (g.nodeId !== undefined) {
+        // Node positions are scaled by `scale` on screen: divide the
+        // viewBox delta so the node tracks the cursor 1:1 at any zoom.
+        const ds = stateRef.current.scale || 1;
+        const nodeId = g.nodeId;
+        g.origOffsetX += dx / ds;
+        g.origOffsetY += dy / ds;
+        setNodeOffsets((prev) => {
+          const next = new Map(prev);
+          next.set(nodeId, { x: g.origOffsetX, y: g.origOffsetY });
+          return next;
+        });
+      }
+    },
+    [toSvgPoint],
+  );
+
+  const handleWinUp = useCallback(() => {
+    gestureRef.current = null;
+    window.removeEventListener("pointermove", handleWinMove);
+    window.removeEventListener("pointerup", handleWinUp);
+    window.removeEventListener("pointercancel", handleWinUp);
+  }, [handleWinMove]);
+
+  // Window-level move/up listeners: reliable for drags that leave the SVG,
+  // with no setPointerCapture (which would retarget click away from nodes).
+  // Stable identities (refs + setState only) so removeEventListener works.
+  // (useCallback definitions live above; see handleWinMove/handleWinUp.)
+
+  const beginGesture = (e: React.PointerEvent) => {
+    window.addEventListener("pointermove", handleWinMove);
+    window.addEventListener("pointerup", handleWinUp);
+    window.addEventListener("pointercancel", handleWinUp);
+    e.preventDefault();
+  };
+
+  const zoomAt = (clientX: number, clientY: number, factor: number) => {
+    const { scale: s, pan: p } = stateRef.current;
+    const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, Number((s * factor).toFixed(3))));
+    if (next === s) return;
+    // Keep the content point under the cursor stationary: t' = p0 - (s'/s)(p0 - t)
+    const k = next / s;
+    const origin = toSvgPoint(clientX, clientY);
+    setScale(next);
+    setPan({ x: origin.x - k * (origin.x - p.x), y: origin.y - k * (origin.y - p.y) });
   };
 
   const handleZoomIn = () => {
-    setScale((s) => Math.min(2.5, Number((s + 0.2).toFixed(2))));
+    const el = containerRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    zoomAt(r.x + r.width / 2, r.y + r.height / 2, 1.2);
   };
 
   const handleZoomOut = () => {
-    setScale((s) => Math.max(0.5, Number((s - 0.2).toFixed(2))));
+    const el = containerRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    zoomAt(r.x + r.width / 2, r.y + r.height / 2, 1 / 1.2);
   };
 
-  const handleReset = () => {
+  const handleResetView = () => {
     setScale(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  const handleResetLayout = () => {
+    setNodeOffsets(new Map());
+  };
+
+  // Wheel zoom (native listener: React's onWheel is passive, we need preventDefault)
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+    };
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleDeviceClick = (device: Device) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+    onDeviceClick(device);
+  };
+
+  const onBackgroundPointerDown = (e: React.PointerEvent) => {
+    const p = toSvgPoint(e.clientX, e.clientY);
+    gestureRef.current = {
+      kind: "pan",
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      lastSvgX: p.x,
+      lastSvgY: p.y,
+      origOffsetX: 0,
+      origOffsetY: 0,
+      moved: false,
+    };
+    beginGesture(e);
+  };
+
+  const onNodePointerDown = (e: React.PointerEvent, device: PositionedDevice) => {
+    e.stopPropagation();
+    const p = toSvgPoint(e.clientX, e.clientY);
+    const orig = nodeOffsets.get(device.id) ?? { x: 0, y: 0 };
+    gestureRef.current = {
+      kind: "node",
+      nodeId: device.id,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      lastSvgX: p.x,
+      lastSvgY: p.y,
+      origOffsetX: orig.x,
+      origOffsetY: orig.y,
+      moved: false,
+    };
+    beginGesture(e);
   };
 
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full bg-muted/20 rounded-lg overflow-hidden"
+      className="relative w-full h-full bg-muted/20 rounded-lg overflow-hidden select-none"
     >
       {/* Network Topology SVG */}
       <svg
         ref={svgRef}
-        className="w-full h-full"
-        viewBox="0 0 800 600"
+        className="w-full h-full cursor-grab active:cursor-grabbing"
+        style={{ touchAction: "none" }}
+        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
         preserveAspectRatio="xMidYMid meet"
+        onPointerDown={onBackgroundPointerDown}
       >
         <defs>
           <marker
@@ -139,7 +334,7 @@ export function NetworkTopology({
           </marker>
         </defs>
 
-        <g transform={`translate(400 300) scale(${scale}) translate(-400 -300)`}>
+        <g transform={`translate(${pan.x} ${pan.y}) scale(${scale})`}>
           {/* Connection lines */}
           <g>
             {connections.map((connection) => {
@@ -184,7 +379,12 @@ export function NetworkTopology({
                     : 22;
 
               return (
-                <g key={device.id} className="network-node">
+                <g
+                  key={device.id}
+                  className="network-node cursor-pointer"
+                  onPointerDown={(e) => onNodePointerDown(e, device)}
+                  onClick={() => handleDeviceClick(device)}
+                >
                   <circle
                     cx={device.layoutX}
                     cy={device.layoutY}
@@ -196,8 +396,6 @@ export function NetworkTopology({
                     }
                     stroke="white"
                     strokeWidth="3"
-                    className="cursor-pointer"
-                    onClick={() => handleDeviceClick(device)}
                     style={{
                       animation:
                         device.status === "unstable"
@@ -251,7 +449,7 @@ export function NetworkTopology({
         <Button
           variant="outline"
           size="icon"
-          onClick={handleReset}
+          onClick={handleResetView}
           aria-label="Reset view"
         >
           <Maximize2 className="h-4 w-4" />
@@ -259,7 +457,7 @@ export function NetworkTopology({
         <Button
           variant="outline"
           size="icon"
-          onClick={handleReset}
+          onClick={handleResetLayout}
           aria-label="Reset layout"
         >
           <RotateCcw className="h-4 w-4" />
@@ -290,6 +488,10 @@ export function NetworkTopology({
           </div>
         </Card>
       </div>
+
+      <p className="absolute bottom-4 right-4 text-xs text-muted-foreground pointer-events-none">
+        Drag to pan • drag a node to move it • scroll to zoom
+      </p>
 
       {/* Status for screen readers */}
       <span className="sr-only">

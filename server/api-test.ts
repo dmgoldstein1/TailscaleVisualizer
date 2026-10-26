@@ -1,5 +1,5 @@
 // Simple API test script to debug Tailscale API issues
-import { getTailscaleClient } from './tailscale';
+import { getTailscaleClient, getTailscaleDeviceStatus } from './tailscale';
 
 async function testTailscaleAPI() {
   console.log('🧪 Testing Tailscale API Connection...\n');
@@ -17,7 +17,8 @@ async function testTailscaleAPI() {
     console.log(`✅ Success! Found ${devices.length} devices`);
     
     devices.forEach(device => {
-      console.log(`  - ${device.name} (${device.os}) - ${device.online ? 'Online' : 'Offline'}`);
+      const status = getTailscaleDeviceStatus(device);
+      console.log(`  - ${device.name} (${device.os}) - ${status}`);
     });
     
   } catch (error: any) {

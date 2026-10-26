@@ -10,6 +10,7 @@ import { z } from "zod";
 import {
   getTailscaleClient,
   getTailscaleConfigStatus,
+  getTailscaleDeviceStatus,
   resetTailscaleClient,
   TailscaleClient,
 } from "./tailscale";
@@ -340,7 +341,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         devices: devices.map((d) => ({
           name: d.name,
           os: d.os,
-          online: d.online,
+          status: getTailscaleDeviceStatus(d),
+          connectedToControl: d.connectedToControl ?? null,
         })),
       });
     } catch (error: unknown) {
