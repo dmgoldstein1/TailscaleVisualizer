@@ -24,6 +24,8 @@ interface TailscaleConfigStatus {
   keyLast4: string | null;
 }
 
+export type { TailscaleConfigStatus };
+
 interface TailscaleSettingsDialogProps {
   isOpen: boolean;
   onClose: () => void;

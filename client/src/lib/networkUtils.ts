@@ -141,3 +141,31 @@ export function getDeviceIcon(
       return "📟";
   }
 }
+
+/**
+ * Tailnet name shown in the header. Prefers the coordinator hostname,
+ * then the parent domain of any device hostname *or* name (the real API
+ * returns short hostnames like "laptop" but FQDN names like
+ * "laptop.my-tailnet.ts.net"), then the configured tailnet name, and
+ * only then the demo fallback — so real tailnets never display
+ * "demo-tailnet.ts.net".
+ */
+export function getTailnetDisplay(
+  devices: Pick<Device, "hostname" | "name" | "isCoordinator">[],
+  configuredTailnet?: string | null,
+): string {
+  const coordinator = devices.find((d) => d.isCoordinator)?.hostname;
+  if (coordinator) return coordinator;
+
+  const dotted = devices
+    .flatMap((d) => [d.hostname, d.name])
+    .find((h) => h.includes("."));
+  if (dotted) return dotted.split(".").slice(1).join(".");
+
+  if (configuredTailnet) {
+    return configuredTailnet.includes(".")
+      ? configuredTailnet
+      : `${configuredTailnet}.ts.net`;
+  }
+  return "demo-tailnet.ts.net";
+}

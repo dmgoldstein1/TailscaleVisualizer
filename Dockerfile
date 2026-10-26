@@ -32,6 +32,8 @@ ENV NODE_ENV=production
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/package.json ./package.json
+# Manual-import fallback for POST /api/network/refresh when no API key is set
+COPY --from=builder --chown=node:node /app/tailscale-devices.json ./tailscale-devices.json
 
 USER node
 EXPOSE 5000

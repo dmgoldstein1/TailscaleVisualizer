@@ -94,10 +94,9 @@ Browser-entered credentials live in server memory only — a container restart c
 ### Views
 
 - **Network Topology** tab — interactive map of devices and connections. Zoom in/out, reset view, click a node for details.
-- **Device Grid** tab — cards per device; click a card for details.
-- **Analytics** tab — placeholder panel (not yet implemented).
-- **Header** — live connection dot (green = WebSocket connected), device search (name/hostname/IP), refresh button (re-pulls from the Tailscale API), **settings (gear) button for entering your Tailscale API key + tailnet in the browser**, dark/light toggle, notifications bell (static count).
-- **Sidebar** — online/offline/unstable counts, status filters, device-type counts, recent-activity feed (currently static sample entries).
+- **Device Chart** tab — status donut and per-type bars (live, follows search), plus a compact device list; click a row for details.
+- **Header** — live connection dot (green = WebSocket connected), tailnet name (coordinator hostname, device domain, or configured tailnet — never the demo fallback with real data), device search (name/hostname/IP), refresh button (re-pulls from the Tailscale API), **settings (gear) button for entering your Tailscale API key + tailnet in the browser**, dark/light toggle, notifications bell (static count).
+- **Sidebar** — online/offline/unstable counts, status filters, device-type counts, live recent-activity feed (seeded from current devices, appended on every WebSocket device update).
 - **Device modal** — click any device: status, IP, last seen, OS, hostname, tags. SSH/Ping buttons are stubs (they only log; no connection is opened).
 
 ## API reference
