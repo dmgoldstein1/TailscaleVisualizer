@@ -508,45 +508,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Periodic simulation of network changes (demo mode only — skipped with real data).
   // Stored so it doesn't keep the process alive in tests; cleared on server close.
-  const simulationTimer = setInterval(async () => {
-    try {
-      const devices = await storage.getDevices();
-      if (devices.length === 0) return;
+  // setInterval takes a void callback: run the async body explicitly voided.
+  const simulationTimer = setInterval(() => {
+    void (async () => {
+      try {
+        const devices = await storage.getDevices();
+        if (devices.length === 0) return;
 
-      // Only simulate if we're not using real Tailscale data
-      if (process.env.TAILSCALE_API_KEY && process.env.TAILSCALE_TAILNET) {
-        return; // Skip simulation when using real data
+        // Only simulate if we're not using real Tailscale data
+        if (process.env.TAILSCALE_API_KEY && process.env.TAILSCALE_TAILNET) {
+          return; // Skip simulation when using real data
+        }
+
+        // Randomly change device status
+        if (Math.random() < 0.3) {
+          // 30% chance
+          const randomDevice =
+            devices[Math.floor(Math.random() * devices.length)];
+          if (!randomDevice) return;
+
+          const statuses = ["connected", "disconnected", "unstable"];
+          const currentStatus = randomDevice.status;
+          const alternatives = statuses.filter((s) => s !== currentStatus);
+          const newStatus =
+            alternatives[Math.floor(Math.random() * alternatives.length)] ??
+            "connected";
+
+          const updatedDevice = await storage.updateDevice(randomDevice.id, {
+            status: newStatus,
+          });
+
+          // Update network stats
+          await storage.updateNetworkStats({});
+          const stats = await storage.getNetworkStats();
+
+          // Broadcast updates
+          broadcastUpdate({ type: "device_status", data: updatedDevice });
+          broadcastUpdate({ type: "stats_updated", data: stats });
+        }
+      } catch (error) {
+        console.error("Error in periodic simulation:", error);
       }
-
-      // Randomly change device status
-      if (Math.random() < 0.3) {
-        // 30% chance
-        const randomDevice =
-          devices[Math.floor(Math.random() * devices.length)];
-        if (!randomDevice) return;
-
-        const statuses = ["connected", "disconnected", "unstable"];
-        const currentStatus = randomDevice.status;
-        const alternatives = statuses.filter((s) => s !== currentStatus);
-        const newStatus =
-          alternatives[Math.floor(Math.random() * alternatives.length)] ??
-          "connected";
-
-        const updatedDevice = await storage.updateDevice(randomDevice.id, {
-          status: newStatus,
-        });
-
-        // Update network stats
-        await storage.updateNetworkStats({});
-        const stats = await storage.getNetworkStats();
-
-        // Broadcast updates
-        broadcastUpdate({ type: "device_status", data: updatedDevice });
-        broadcastUpdate({ type: "stats_updated", data: stats });
-      }
-    } catch (error) {
-      console.error("Error in periodic simulation:", error);
-    }
+    })();
   }, 10000); // Every 10 seconds
   // Don't hold the event loop open for this background timer.
   if (typeof simulationTimer.unref === "function") {

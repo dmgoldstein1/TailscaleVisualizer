@@ -66,7 +66,7 @@ app.use((req, res, next) => {
   next();
 });
 
-(async () => {
+void (async () => {
   const server = await registerRoutes(app);
 
   // Central error handler — log, do NOT rethrow after responding

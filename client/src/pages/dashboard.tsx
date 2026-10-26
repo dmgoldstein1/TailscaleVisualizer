@@ -38,7 +38,7 @@ export default function Dashboard() {
         title: "Network Refreshed",
         description: "Successfully updated network data from Tailscale API",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/network/topology"] });
+      void queryClient.invalidateQueries({ queryKey: ["/api/network/topology"] });
     },
     onError: (error: Error) => {
       toast({
@@ -62,7 +62,7 @@ export default function Dashboard() {
         message.type === "stats_updated" ||
         message.type === "initial_topology"
       ) {
-        refetch();
+        void refetch();
       }
     } catch {
       // Ignore malformed WebSocket payloads
@@ -100,7 +100,7 @@ export default function Dashboard() {
             </div>
             <div className="flex items-center space-x-2 text-sm text-muted-foreground">
               <span>
-                {topology?.devices?.find((d) => d.isCoordinator)?.hostname ||
+                {topology.devices.find((d) => d.isCoordinator)?.hostname ||
                   "demo-tailnet.ts.net"}
               </span>
               <div
@@ -285,13 +285,13 @@ export default function Dashboard() {
       </div>
 
       {/* Device Details Modal */}
-      {selectedDevice && (
+      {selectedDevice ? (
         <DeviceModal
           device={selectedDevice}
-          isOpen={!!selectedDevice}
+          isOpen={true}
           onClose={() => setSelectedDevice(null)}
         />
-      )}
+      ) : null}
 
       {/* Tailscale connection settings */}
       <TailscaleSettingsDialog

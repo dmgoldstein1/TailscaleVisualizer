@@ -51,7 +51,7 @@ while IFS= read -r file; do
     matches=$(grep -nIE "$pattern" "$file" 2>/dev/null | grep -viE "your_|example|here|placeholder|xxx|\.\.\.|starts with" || true)
     if [ -n "$matches" ]; then
       echo "❌ Possible secret in $file:"
-      echo "$matches" | sed 's/^/    /'
+      printf '%s\n' "$matches" | while IFS= read -r line; do printf '    %s\n' "$line"; done
       failures=1
     fi
   done
@@ -60,7 +60,7 @@ while IFS= read -r file; do
   kv_matches=$(grep -nIE "(api[_-]?key|password|passwd|secret|token)['\"]?\s*[:=]\s*['\"][^'\"]{12,}['\"]" "$file" 2>/dev/null | grep -viE "your_|example|here|placeholder|xxx|\.\.\.|starts with" || true)
   if [ -n "$kv_matches" ]; then
     echo "❌ Possible secret assignment in $file:"
-    echo "$kv_matches" | sed 's/^/    /'
+    printf '%s\n' "$kv_matches" | while IFS= read -r line; do printf '    %s\n' "$line"; done
     failures=1
   fi
 done < <(printf '%s\n' "$files_list")

@@ -7,6 +7,12 @@ import { buttonVariants } from "@/components/ui/button";
 
 export type CalendarProps = React.ComponentProps<typeof DayPicker>;
 
+// Hoisted (not nested in render): React remounts nested component types.
+function CalendarChevron({ orientation, className, ...props }: ChevronProps) {
+  const Icon = orientation === "right" ? ChevronRight : ChevronLeft;
+  return <Icon className={cn("h-4 w-4", className)} {...props} />;
+}
+
 function Calendar({
   className,
   classNames,
@@ -54,13 +60,7 @@ function Calendar({
         ...classNames,
       }}
       components={{
-        Chevron: ({ orientation, className, ...props }: ChevronProps) => {
-          const Icon =
-            orientation === "right" ? ChevronRight : ChevronLeft;
-          return (
-            <Icon className={cn("h-4 w-4", className)} {...props} />
-          );
-        },
+        Chevron: CalendarChevron,
       }}
       {...props}
     />

@@ -103,7 +103,7 @@ export class TailscaleClient {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       // Try alternative endpoint formats
-      if (message?.includes('403')) {
+      if (message.includes('403')) {
         // Try without .ts.net suffix
         const simpleTailnet = this.tailnet.replace('.ts.net', '');
 

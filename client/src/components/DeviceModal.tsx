@@ -146,7 +146,7 @@ export function DeviceModal({ device, isOpen, onClose }: DeviceModalProps) {
           </div>
 
           {/* Tags */}
-          {device.tags && device.tags.length > 0 && (
+          {device.tags.length > 0 && (
             <div className="space-y-2">
               <label className="text-sm font-medium text-muted-foreground">
                 Tags

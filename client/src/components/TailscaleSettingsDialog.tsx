@@ -51,7 +51,7 @@ export function TailscaleSettingsDialog({
       if (status?.tailnet) {
         setTailnet(status.tailnet);
       }
-      refetch();
+      void refetch();
     }
   }, [isOpen, status?.tailnet, refetch]);
 

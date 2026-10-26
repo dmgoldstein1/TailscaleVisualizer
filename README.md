@@ -30,7 +30,7 @@ cp .env.example .env   # fill in TAILSCALE_API_KEY / TAILSCALE_TAILNET
 
 The start script checks whether port 5000 is occupied and increments until it finds a free one, then prints the actual URL (e.g. `http://localhost:5001`). Override the starting port with `HOST_PORT=6000 ./docker-start.sh`. The container itself always listens on `PORT` (default 5000); only the host-side mapping moves.
 
-Open the printed URL (default **http://localhost:5000**).
+Open the printed URL (default <http://localhost:5000>).
 
 | Variable | Required | Default | What it does |
 |---|---|---|---|
@@ -77,7 +77,7 @@ docker compose up --build -d   # rebuild after pulling new code
 
 ## Using the dashboard
 
-Open **http://localhost:5000**:
+Open <http://localhost:5000>:
 
 ### Entering credentials in the browser
 
