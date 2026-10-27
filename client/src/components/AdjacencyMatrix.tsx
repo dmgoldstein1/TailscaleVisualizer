@@ -1,18 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { Device, Connection } from "@shared/schema";
-
-export interface MatrixApi {
-  zoomIn: () => void;
-  zoomOut: () => void;
-  resetView: () => void;
-}
 
 interface AdjacencyMatrixProps {
   devices: Device[];
   connections: Connection[];
   onDeviceClick: (device: Device) => void;
-  /** Lets the shared toolbar drive this view's pan/zoom. */
-  apiRef: { current: MatrixApi | null };
 }
 
 const MIN_SCALE = 0.5;
