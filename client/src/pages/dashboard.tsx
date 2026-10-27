@@ -1,34 +1,90 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Search, Bell, Sun, Moon, Network, Zap, RefreshCw, Settings } from "lucide-react";
+import { Search, Bell, Sun, Moon, Network, RefreshCw, Settings, ChartColumn, ChevronRight } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { NetworkTopology } from "@/components/NetworkTopology";
 import { Sidebar } from "@/components/Sidebar";
 import { DeviceModal } from "@/components/DeviceModal";
+import { DeviceChart } from "@/components/DeviceChart";
 import { TailscaleSettingsDialog } from "@/components/TailscaleSettingsDialog";
+import type { TailscaleConfigStatus } from "@/components/TailscaleSettingsDialog";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useTheme } from "@/components/ThemeProvider";
+import { getTailnetDisplay } from "@/lib/networkUtils";
+import { formatDistanceToNow } from "date-fns";
+import {
+  seedActivities,
+  activityFromUpdate,
+  type ActivityEntry,
+} from "@/lib/activity";
 import type {
   Device,
   NetworkTopology as NetworkTopologyType,
 } from "@shared/schema";
 
+interface Notification {
+  id: string;
+  title: string;
+  description?: string;
+  time: string;
+  read: boolean;
+  variant: "info" | "success" | "destructive";
+}
+
 export default function Dashboard() {
   const { theme, toggleTheme } = useTheme();
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [notificationCount] = useState(3);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activities, setActivities] = useState<ActivityEntry[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const { toast } = useToast();
+
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const pushNotification = useCallback(
+    (n: Omit<Notification, "id" | "time" | "read">) => {
+      setNotifications((prev) =>
+        [
+          {
+            ...n,
+            id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            time: new Date().toISOString(),
+            read: false,
+          },
+          ...prev,
+        ].slice(0, 20),
+      );
+    },
+    [],
+  );
+
+  const markAllNotificationsRead = useCallback(() => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+  }, []);
+
+  const clearNotifications = useCallback(() => {
+    setNotifications([]);
+  }, []);
 
   const { data: topology, refetch } = useQuery<NetworkTopologyType>({
     queryKey: ["/api/network/topology"],
+  });
+
+  const { data: configStatus } = useQuery<TailscaleConfigStatus>({
+    queryKey: ["/api/config/tailscale"],
   });
 
   const refreshMutation = useMutation({
@@ -38,6 +94,11 @@ export default function Dashboard() {
         title: "Network Refreshed",
         description: "Successfully updated network data from Tailscale API",
       });
+      pushNotification({
+        title: "Network refreshed",
+        description: "Successfully updated network data from Tailscale API",
+        variant: "success",
+      });
       void queryClient.invalidateQueries({ queryKey: ["/api/network/topology"] });
     },
     onError: (error: Error) => {
@@ -46,16 +107,39 @@ export default function Dashboard() {
         description: error.message || "Failed to refresh network data",
         variant: "destructive",
       });
+      pushNotification({
+        title: "Refresh failed",
+        description: error.message || "Failed to refresh network data",
+        variant: "destructive",
+      });
     },
   });
 
   const { isConnected, lastMessage } = useWebSocket();
 
+  // Seed the activity feed from the current snapshot. Re-seed whenever the
+  // device set itself changes (e.g. demo data -> real Tailscale sync) so
+  // stale entries from a previous dataset never linger; live WebSocket
+  // events keep it fresh in between.
+  const deviceSignature = topology
+    ? topology.devices
+        .map((d) => d.id)
+        .sort((a, b) => a - b)
+        .join(",")
+    : "";
+  const [seedSignature, setSeedSignature] = useState<string | null>(null);
+  useEffect(() => {
+    if (topology && seedSignature !== deviceSignature) {
+      setSeedSignature(deviceSignature);
+      setActivities(seedActivities(topology.devices));
+    }
+  }, [topology, deviceSignature, seedSignature]);
+
   // Handle real-time updates
   useEffect(() => {
     if (!lastMessage) return;
     try {
-      const message = JSON.parse(lastMessage) as { type?: string };
+      const message = JSON.parse(lastMessage) as { type?: string; data?: unknown };
 
       if (
         message.type === "device_status" ||
@@ -64,10 +148,19 @@ export default function Dashboard() {
       ) {
         void refetch();
       }
+
+      const entry = activityFromUpdate(message);
+      if (entry) {
+        setActivities((prev) => [entry, ...prev].slice(0, 8));
+        pushNotification({
+          title: entry.message,
+          variant: entry.type === "disconnected" ? "destructive" : "info",
+        });
+      }
     } catch {
       // Ignore malformed WebSocket payloads
     }
-  }, [lastMessage, refetch]);
+  }, [lastMessage, refetch, pushNotification]);
 
   const filteredDevices =
     topology?.devices?.filter(
@@ -100,8 +193,10 @@ export default function Dashboard() {
             </div>
             <div className="flex items-center space-x-2 text-sm text-muted-foreground">
               <span>
-                {topology.devices.find((d) => d.isCoordinator)?.hostname ||
-                  "demo-tailnet.ts.net"}
+                {getTailnetDisplay(
+                  topology.devices,
+                  configStatus?.tailnet,
+                )}
               </span>
               <div
                 className={`w-2 h-2 rounded-full ${isConnected ? "bg-connected-green" : "bg-error-red"}`}
@@ -150,21 +245,93 @@ export default function Dashboard() {
               )}
             </Button>
 
-            <Button variant="outline" size="icon" className="relative">
-              <Bell className="h-4 w-4" />
-              {notificationCount > 0 && (
-                <Badge className="absolute -top-2 -right-2 h-5 w-5 rounded-full p-0 flex items-center justify-center text-xs">
-                  {notificationCount}
-                </Badge>
-              )}
-            </Button>
+            <DropdownMenu
+              onOpenChange={(open) => {
+                if (open) markAllNotificationsRead();
+              }}
+            >
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="relative"
+                  title="Notifications"
+                >
+                  <Bell className="h-4 w-4" />
+                  {unreadCount > 0 && (
+                    <Badge className="absolute -top-2 -right-2 h-5 w-5 rounded-full p-0 flex items-center justify-center text-xs">
+                      {unreadCount}
+                    </Badge>
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-80">
+                <DropdownMenuLabel className="flex items-center justify-between">
+                  <span>Notifications</span>
+                  {notifications.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={clearNotifications}
+                      className="text-xs font-normal text-muted-foreground hover:text-foreground"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {notifications.length === 0 ? (
+                  <p className="px-2 py-4 text-sm text-muted-foreground">
+                    No notifications yet. Device changes and refresh results
+                    will appear here.
+                  </p>
+                ) : (
+                  <div className="max-h-80 overflow-y-auto">
+                    {notifications.map((n) => (
+                      <div
+                        key={n.id}
+                        className="flex items-start gap-2 px-2 py-2"
+                      >
+                        <span
+                          className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${
+                            n.variant === "destructive"
+                              ? "bg-error-red"
+                              : n.variant === "success"
+                                ? "bg-connected-green"
+                                : "bg-warning-yellow"
+                          }`}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium leading-tight">
+                            {n.title}
+                          </p>
+                          {n.description && (
+                            <p className="text-xs text-muted-foreground truncate">
+                              {n.description}
+                            </p>
+                          )}
+                          <p className="text-xs text-muted-foreground">
+                            {formatDistanceToNow(new Date(n.time), {
+                              addSuffix: true,
+                            })}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </header>
 
       <div className="flex">
         {/* Sidebar */}
-        <Sidebar stats={topology.stats} devices={topology.devices} />
+        <Sidebar
+          stats={topology.stats}
+          devices={topology.devices}
+          activities={activities}
+        />
 
         {/* Main Content */}
         <main className="flex-1 flex flex-col">
@@ -172,7 +339,7 @@ export default function Dashboard() {
           <div className="border-b bg-card/50 backdrop-blur supports-[backdrop-filter]:bg-card/50">
             <div className="px-6 py-4">
               <Tabs defaultValue="topology" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
+                <TabsList className="grid w-full grid-cols-2">
                   <TabsTrigger
                     value="topology"
                     className="flex items-center space-x-2"
@@ -181,23 +348,11 @@ export default function Dashboard() {
                     <span>Network Topology</span>
                   </TabsTrigger>
                   <TabsTrigger
-                    value="grid"
+                    value="chart"
                     className="flex items-center space-x-2"
                   >
-                    <div className="grid grid-cols-2 gap-0.5 h-4 w-4">
-                      <div className="bg-current rounded-sm" />
-                      <div className="bg-current rounded-sm" />
-                      <div className="bg-current rounded-sm" />
-                      <div className="bg-current rounded-sm" />
-                    </div>
-                    <span>Device Grid</span>
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="analytics"
-                    className="flex items-center space-x-2"
-                  >
-                    <Zap className="h-4 w-4" />
-                    <span>Analytics</span>
+                    <ChartColumn className="h-4 w-4" />
+                    <span>Device Chart</span>
                   </TabsTrigger>
                 </TabsList>
 
@@ -211,71 +366,68 @@ export default function Dashboard() {
                   </div>
                 </TabsContent>
 
-                <TabsContent value="grid" className="mt-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-6">
-                    {filteredDevices.map((device) => (
-                      <Card
-                        key={device.id}
-                        className="cursor-pointer hover:shadow-lg transition-shadow"
-                        onClick={() => setSelectedDevice(device)}
-                      >
-                        <CardHeader className="pb-3">
-                          <div className="flex items-center justify-between">
-                            <CardTitle className="text-base">
-                              {device.name}
-                            </CardTitle>
-                            <Badge
-                              variant={
-                                device.status === "connected"
-                                  ? "default"
-                                  : device.status === "unstable"
-                                    ? "destructive"
-                                    : "secondary"
-                              }
+                <TabsContent value="chart" className="mt-6">
+                  <div className="p-6 space-y-4">
+                    <DeviceChart devices={filteredDevices} />
+
+                    <div className="space-y-2">
+                      <h3 className="text-md font-medium">
+                        Devices ({filteredDevices.length})
+                      </h3>
+                      {filteredDevices.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          No devices match the current search.
+                        </p>
+                      ) : (
+                        <div className="rounded-lg border divide-y">
+                          {filteredDevices.map((device) => (
+                            <button
+                              key={device.id}
+                              type="button"
+                              onClick={() => setSelectedDevice(device)}
+                              className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/50 transition-colors"
                             >
-                              {device.status}
-                            </Badge>
-                          </div>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="space-y-2 text-sm">
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">
-                                Type:
+                              <span
+                                className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+                                  device.status === "connected"
+                                    ? "bg-connected-green"
+                                    : device.status === "unstable"
+                                      ? "bg-warning-yellow"
+                                      : "bg-muted-foreground"
+                                }`}
+                              />
+                              <span className="flex-1 min-w-0">
+                                <span className="block text-sm font-medium truncate">
+                                  {device.name}
+                                </span>
+                                <span className="block text-xs text-muted-foreground truncate">
+                                  {device.hostname}
+                                </span>
                               </span>
-                              <span>{device.deviceType}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">IP:</span>
-                              <span className="font-mono">
+                              <span className="hidden md:block text-xs font-mono text-muted-foreground">
                                 {device.ipAddress}
                               </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">OS:</span>
-                              <span>{device.os}</span>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="analytics" className="mt-6">
-                  <div className="p-6">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>Network Analytics</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <p className="text-muted-foreground">
-                          Analytics dashboard coming soon. This will show
-                          network performance metrics, bandwidth usage, and
-                          connection quality over time.
-                        </p>
-                      </CardContent>
-                    </Card>
+                              <span className="hidden sm:block text-xs text-muted-foreground capitalize">
+                                {device.deviceType} • {device.os}
+                              </span>
+                              <Badge
+                                variant={
+                                  device.status === "connected"
+                                    ? "default"
+                                    : device.status === "unstable"
+                                      ? "destructive"
+                                      : "secondary"
+                                }
+                                className="capitalize"
+                              >
+                                {device.status}
+                              </Badge>
+                              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </TabsContent>
               </Tabs>

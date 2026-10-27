@@ -68,8 +68,23 @@
 
 @layer components {
   .network-node {
-    transition: all 0.2s ease-in-out;
+    transition: transform 0.2s ease-in-out;
     cursor: pointer;
+    /* Scale about the node's own center. Without this, CSS transforms
+       on SVG elements default to the viewBox origin, so :hover would
+       fling the node away from the cursor instead of growing in place. */
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+
+  /* Halo behind SVG labels so lines crossing under text stay legible.
+     (Deconfliction in graphLayouts.placeLabels prevents text/text and
+     text/node overlaps; the halo handles text/line crossings.) */
+  .svg-text-halo {
+    paint-order: stroke;
+    stroke: var(--background);
+    stroke-width: 4px;
+    stroke-linejoin: round;
   }
 
   .network-node:hover {

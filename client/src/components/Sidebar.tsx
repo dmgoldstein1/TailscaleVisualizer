@@ -4,13 +4,16 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import type { Device, NetworkStats } from "@shared/schema";
+import { formatDistanceToNow } from "date-fns";
+import type { ActivityEntry } from "@/lib/activity";
 
 interface SidebarProps {
   stats: NetworkStats;
   devices: Device[];
+  activities: ActivityEntry[];
 }
 
-export function Sidebar({ stats, devices }: SidebarProps) {
+export function Sidebar({ stats, devices, activities }: SidebarProps) {
   const [showOnline, setShowOnline] = useState(true);
   const [showOffline, setShowOffline] = useState(false);
   const [showUnstable, setShowUnstable] = useState(true);
@@ -21,27 +24,9 @@ export function Sidebar({ stats, devices }: SidebarProps) {
     server: devices.filter((d) => d.deviceType === "server").length,
   };
 
-  // Recent activity simulation
-  const recentActivity = [
-    {
-      id: 1,
-      message: "john-macbook connected",
-      time: "2 minutes ago",
-      type: "connected",
-    },
-    {
-      id: 2,
-      message: "server-prod-01 disconnected",
-      time: "15 minutes ago",
-      type: "disconnected",
-    },
-    {
-      id: 3,
-      message: "jane-iphone unstable connection",
-      time: "1 hour ago",
-      type: "unstable",
-    },
-  ];
+  // Recent activity comes live from the dashboard (seeded from the current
+  // snapshot, then appended on every WebSocket device update).
+  const recentActivity = activities;
 
   const getActivityColor = (type: string) => {
     switch (type) {
@@ -192,19 +177,27 @@ export function Sidebar({ stats, devices }: SidebarProps) {
             <h3 className="text-md font-medium">Recent Activity</h3>
           </div>
           <div className="space-y-3">
-            {recentActivity.map((activity) => (
-              <div key={activity.id} className="flex items-start space-x-3">
-                <div
-                  className={`w-2 h-2 rounded-full mt-2 ${getActivityColor(activity.type)}`}
-                />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm">{activity.message}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {activity.time}
-                  </p>
+            {recentActivity.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No recent activity yet.
+              </p>
+            ) : (
+              recentActivity.map((activity) => (
+                <div key={activity.id} className="flex items-start space-x-3">
+                  <div
+                    className={`w-2 h-2 rounded-full mt-2 ${getActivityColor(activity.type)}`}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm">{activity.message}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDistanceToNow(new Date(activity.time), {
+                        addSuffix: true,
+                      })}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </div>
